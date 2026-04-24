@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Generic Tensor Decomposition Specification</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #111827;
+      --panel-2: #172033;
+      --text: #dbe4f0;
+      --muted: #97a6ba;
+      --accent: #58c4ff;
+      --accent-2: #8ef0c2;
+      --border: #263246;
+      --code: #0f172a;
+      --warn: #ffd166;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #0a101c 0%, #0b1220 100%);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .wrap {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+    h1, h2, h3 {
+      line-height: 1.2;
+      margin: 0 0 14px;
+    }
+    h1 {
+      font-size: 2.1rem;
+      margin-bottom: 12px;
+    }
+    h2 {
+      margin-top: 36px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      font-size: 1.35rem;
+    }
+    h3 {
+      margin-top: 26px;
+      font-size: 1.05rem;
+      color: var(--accent-2);
+    }
+    p, li {
+      color: var(--text);
+      font-size: 0.98rem;
+    }
+    .lede {
+      color: var(--muted);
+      max-width: 860px;
+      font-size: 1.02rem;
+    }
+    .card {
+      background: rgba(17, 24, 39, 0.88);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 18px 8px;
+      margin: 18px 0;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.2);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 16px;
+      margin: 18px 0;
+    }
+    .mini {
+      background: rgba(23, 32, 51, 0.7);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 14px 10px;
+    }
+    .mini h3 {
+      margin-top: 0;
+    }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.92rem;
+    }
+    code {
+      background: rgba(88, 196, 255, 0.08);
+      border: 1px solid rgba(88, 196, 255, 0.18);
+      border-radius: 6px;
+      padding: 0.1rem 0.35rem;
+    }
+    pre {
+      background: var(--code);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      overflow-x: auto;
+      color: #d7e3f5;
+    }
+    ul {
+      padding-left: 1.1rem;
+    }
+    .note, .warning {
+      border-left: 4px solid var(--accent);
+      background: rgba(88, 196, 255, 0.08);
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin: 16px 0;
+      color: var(--text);
+    }
+    .warning {
+      border-left-color: var(--warn);
+      background: rgba(255, 209, 102, 0.08);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 18px;
+      font-size: 0.95rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .muted {
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Generic Tensor Decomposition Specification</h1>
+    <p class="lede">
+      This document specifies a fully general tensor dataset and decomposition interface for an external
+      library that will operate independently of Lunascope. The library must not assume any particular
+      scientific domain, modality, event type, or application-specific metadata schema. It should accept
+      numeric tensors with named axes plus arbitrary metadata, support lazy subsetting and concatenation
+      across files, and return decomposition outputs that can be joined back onto source instances for
+      plotting, browsing, filtering, annotation, or downstream analysis.
+    </p>
+
+    <div class="card">
+      <h2>1. Design Goals</h2>
+      <ul>
+        <li>Remain completely domain-agnostic.</li>
+        <li>Make the numeric tensor the primary object and metadata a first-class companion, not an afterthought.</li>
+        <li>Support both in-memory tensors and on-disk datasets.</li>
+        <li>Support metadata-driven views without re-passing full data tables every time.</li>
+        <li>Allow concatenation across many files or individuals while preserving provenance.</li>
+        <li>Return outputs with stable ids so results can be merged back into source metadata.</li>
+        <li>Keep axes explicit and named so reshape rules are never implicit.</li>
+      </ul>
+    </div>
+
+    <h2>2. Core Abstraction</h2>
+    <p>
+      The core object is an axis-annotated tensor: a numeric array with named axes, optional explicit axis
+      index arrays, per-axis metadata tables, and global attributes.
+    </p>
+
+    <pre><code>@dataclass
+class AxisAnnotatedTensor:
+    data: ArrayLike
+    axes: list[str]
+    axis_index: dict[str, np.ndarray | None]
+    axis_meta: dict[str, pd.DataFrame]
+    attrs: dict</code></pre>
+
+    <div class="grid">
+      <div class="mini">
+        <h3>data</h3>
+        <p>Numeric tensor, such as NumPy, Zarr-backed arrays, Dask arrays, CuPy arrays, or another array interface.</p>
+      </div>
+      <div class="mini">
+        <h3>axes</h3>
+        <p>Ordered axis names, for example <code>["instance", "sample", "channel"]</code>.</p>
+      </div>
+      <div class="mini">
+        <h3>axis_index</h3>
+        <p>Optional explicit axis coordinate arrays or ids, such as sample offsets, times, channel ids, or instance ids.</p>
+      </div>
+      <div class="mini">
+        <h3>axis_meta</h3>
+        <p>Per-axis metadata tables, one row per element of the corresponding axis, with arbitrary user-defined columns.</p>
+      </div>
+    </div>
+
+    <div class="note">
+      The library should not hardcode axis names, but should work smoothly with common conventions such as
+      <code>instance</code>, <code>sample</code>, <code>channel</code>, <code>feature</code>, and <code>component</code>.
+    </div>
+
+    <h2>3. Generic Metadata Model</h2>
+    <p>
+      Metadata are arbitrary typed annotations attached to named axes. The decomposition package should not
+      encode domain-specific concepts such as subject, stage, modality, class label, condition, or source,
+      but it must allow all of them to be carried through as ordinary metadata fields.
+    </p>
+
+    <h3>Per-Axis Requirements</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Axis</th>
+          <th>Requirement</th>
+          <th>Examples</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>instance</code></td>
+          <td>One metadata row per instance. Must include a stable unique id.</td>
+          <td><code>instance_id</code>, class, score, provenance, group, tags, arbitrary covariates</td>
+        </tr>
+        <tr>
+          <td><code>sample</code></td>
+          <td>One row per sample coordinate if present.</td>
+          <td><code>sample_index</code>, <code>sample_time</code>, masks, regions, windows</td>
+        </tr>
+        <tr>
+          <td><code>channel</code></td>
+          <td>One row per channel or feature dimension if present.</td>
+          <td><code>channel_id</code>, label, unit, transform, grouping</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="warning">
+      The package should never require domain-specific columns. It should only require stable ids and alignment
+      between metadata row count and axis length.
+    </div>
+
+    <h2>4. Canonical Use Case</h2>
+    <p>
+      A common case is a tensor with shape <code>instance x sample x channel</code>. Even in that case, the
+      decomposition library should treat those names as conventions rather than hardcoded semantics.
+    </p>
+
+    <pre><code>tensor.shape == (E, T, C)
+axes == ["instance", "sample", "channel"]</code></pre>
+
+    <p>For this case, a typical set of coordinates might be:</p>
+
+    <pre><code>axis_index = {
+    "instance": instance_ids,
+    "sample": sample_offsets_or_times,
+    "channel": channel_ids
+}</code></pre>
+
+    <h2>5. Dataset and View Model</h2>
+    <p>
+      The package should distinguish between a persistent dataset and lightweight lazy views onto that dataset.
+      This allows users to open a compiled tensor once, then make many metadata-driven selections without
+      repeatedly passing the full tensor or all metadata tables.
+    </p>
+
+    <pre><code>@dataclass
+class TensorDataset:
+    manifest: dict
+    store: Any
+    axis_meta: dict[str, pd.DataFrame]
+    attrs: dict
+
+@dataclass
+class TensorView:
+    dataset: TensorDataset
+    selectors: dict
+    attrs: dict</code></pre>
+
+    <h3>Expected View Operations</h3>
+    <ul>
+      <li><code>query(axis, expr)</code></li>
+      <li><code>filter(axis, ids_or_mask)</code></li>
+      <li><code>slice(axis, start, stop)</code></li>
+      <li><code>take(axis, indices)</code></li>
+      <li><code>materialize()</code></li>
+    </ul>
+
+    <pre><code>ds = open_dataset("/path/to/dataset")
+view = ds.query(axis="instance", expr="label == 'target' and qc_pass")
+view = view.filter(axis="channel", ids_or_mask=["ch_a", "ch_b", "ch_c"])
+result = decompose(view, method="svd", config={...})</code></pre>
+
+    <h2>6. On-Disk Storage Specification</h2>
+    <p>
+      The preferred storage format is a directory-based bundle using:
+    </p>
+    <ul>
+      <li><code>zarr</code> for numeric arrays</li>
+      <li><code>parquet</code> for metadata tables</li>
+      <li><code>json</code> for a top-level manifest</li>
+    </ul>
+
+    <pre><code>dataset/
+  manifest.json
+  arrays/
+    data.zarr
+    masks.zarr              # optional
+  meta/
+    instance.parquet
+    sample.parquet
+    channel.parquet
+  partitions/
+    files.parquet           # optional but recommended
+    groups.parquet          # optional but recommended</code></pre>
+
+    <h3>Why This Layout</h3>
+    <ul>
+      <li>Supports partial reads and lazy access.</li>
+      <li>Supports large compiled datasets.</li>
+      <li>Supports extension and append workflows.</li>
+      <li>Avoids opaque monolithic blobs.</li>
+      <li>Supports future non-Python consumers more easily than pickle.</li>
+    </ul>
+
+    <h2>7. Manifest Specification</h2>
+    <p>
+      The manifest must explicitly declare the tensor shape, dtype, axis names, coordinate id columns, and
+      paths to metadata and array stores.
+    </p>
+
+    <pre><code>{
+  "schema_version": "0.1.0",
+  "tensor_name": "data",
+  "shape": [42337, 1793, 3],
+  "dtype": "float32",
+  "axes": ["instance", "sample", "channel"],
+  "axis_index_columns": {
+    "instance": "instance_id",
+    "sample": "sample_index",
+    "channel": "channel_id"
+  },
+  "meta_files": {
+    "instance": "meta/instance.parquet",
+    "sample": "meta/sample.parquet",
+    "channel": "meta/channel.parquet"
+  },
+  "array_store": "arrays/data.zarr",
+  "mask_store": "arrays/masks.zarr",
+  "attrs": {
+    "creator": "example-package",
+    "version": "0.1.0"
+  }
+}</code></pre>
+
+    <h2>8. Provenance and Compiled Multi-File Datasets</h2>
+    <p>
+      Concatenation across many files or individuals should be a first-class use case. The specification should
+      support compiling many source tensors into a single logical dataset while preserving lineage.
+    </p>
+
+    <h3>Recommended Instance Metadata Columns</h3>
+    <ul>
+      <li><code>instance_id</code>: globally unique within the compiled dataset</li>
+      <li><code>source_dataset_id</code></li>
+      <li><code>source_file_id</code></li>
+      <li><code>group_id</code>: arbitrary grouping key</li>
+      <li><code>source_instance_id</code>: original id in the source system, if one exists</li>
+    </ul>
+
+    <h3>Recommended Optional Catalog Tables</h3>
+    <ul>
+      <li><code>files.parquet</code>: one row per source file</li>
+      <li><code>groups.parquet</code>: one row per source group such as session, participant, acquisition, block, or any arbitrary grouping</li>
+    </ul>
+
+    <pre><code>compiled = concat_datasets(
+    datasets,
+    along="instance",
+    align={"channel": "channel_id", "sample": "sample_index"},
+    join="inner"
+)</code></pre>
+
+    <h3>Concatenation Rules</h3>
+    <ul>
+      <li>Concatenation along <code>instance</code> should be standard.</li>
+      <li>Other axes may be concatenated only with explicit compatibility rules.</li>
+      <li>Axis names must match.</li>
+      <li>Non-concatenated axes must either match exactly or be aligned through an explicit key.</li>
+      <li>Any source-specific transforms or preprocessing must be recorded in metadata or global attributes.</li>
+    </ul>
+
+    <h2>9. Missing Data and Masks</h2>
+    <p>
+      The spec should allow an optional validity mask, but for a first version it is reasonable to require that
+      tensors are already regularized before decomposition. Ragged inputs should be normalized upstream.
+    </p>
+
+    <p>Recommended v1 policy:</p>
+    <ul>
+      <li>Regular tensor required.</li>
+      <li>Optional boolean mask allowed.</li>
+      <li>Ragged inputs must be converted to a common shape before writing.</li>
+    </ul>
+
+    <h2>10. Decomposition API</h2>
+    <p>
+      The decomposition package should accept a dataset view, a method name, and a fully serializable config.
+    </p>
+
+    <pre><code>result = decompose(
+    tensor_view,
+    method="svd",
+    config={
+        "center": "none",
+        "scale": "none",
+        "rank": 8
+    }
+)</code></pre>
+
+    <h3>Expected Config Fields</h3>
+    <ul>
+      <li><code>center</code>: <code>none</code>, <code>global</code>, <code>per-axis</code>, or other explicit modes</li>
+      <li><code>scale</code>: <code>none</code>, z-score-like modes, robust modes, or explicit user-defined modes</li>
+      <li><code>missing</code>: <code>error</code>, <code>mask</code>, or another explicit policy</li>
+      <li><code>rank</code>: fixed rank or a selection strategy</li>
+      <li><code>weights</code>: optional axis or channel weighting</li>
+      <li><code>sample_mask</code>: optional subset of one axis before decomposition</li>
+      <li><code>flatten</code>: required for matrix methods if multiple axes are collapsed</li>
+    </ul>
+
+    <div class="note">
+      All config values should be serializable back into the output so downstream tools always know exactly how
+      the result was created.
+    </div>
+
+    <h2>11. Output Specification</h2>
+    <p>
+      Results should also be generic and axis-aware. The output must preserve stable ids and explicit axis names
+      so plots, subsets, and annotations can be reconstructed without ambiguity.
+    </p>
+
+    <pre><code>@dataclass
+class DecompositionResult:
+    method: str
+    config: dict
+    input_ref: dict
+    factor_tables: dict[str, pd.DataFrame]
+    component_tensors: dict[str, AxisAnnotatedTensor]
+    diagnostics: dict
+    attrs: dict</code></pre>
+
+    <h3>Recommended Output Parts</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Field</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>factor_tables["instance"]</code></td>
+          <td>Scores, cluster labels, reconstruction error, outlier scores, and any instance-level derived values</td>
+        </tr>
+        <tr>
+          <td><code>factor_tables["sample"]</code></td>
+          <td>Sample-axis weights if the method exposes them directly</td>
+        </tr>
+        <tr>
+          <td><code>factor_tables["channel"]</code></td>
+          <td>Channel or feature-axis weights if the method exposes them directly</td>
+        </tr>
+        <tr>
+          <td><code>component_tensors["components"]</code></td>
+          <td>Waveform-like or tensor-like component objects, for example <code>component x sample x channel</code></td>
+        </tr>
+        <tr>
+          <td><code>diagnostics</code></td>
+          <td>Method-specific diagnostics such as singular values, explained variance, convergence, residuals</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>12. Minimum Instance-Level Return Contract</h2>
+    <p>
+      For any decomposition performed on a dataset with an <code>instance</code> axis, the result should always
+      contain a table keyed by the same <code>instance_id</code> values used in the input dataset or input view.
+    </p>
+
+    <pre><code>instance_id
+score_1
+score_2
+...
+score_k
+recon_error
+cluster               # optional
+outlier_score         # optional</code></pre>
+
+    <p>
+      This is the critical contract for downstream tools that want to attach factor scores or cluster labels back
+      onto the original dataset and use them for filtering, plotting, browsing, or annotation.
+    </p>
+
+    <h2>13. Matrix and Tensor Examples</h2>
+
+    <h3>Example: Matrix SVD on Flattened Instances</h3>
+    <pre><code>input tensor:  instance x sample x channel
+flattened:     instance x (sample * channel)
+
+outputs:
+  factor_tables["instance"]   -> left scores
+  component_tensors["components"] -> reshaped right vectors as component x sample x channel
+  diagnostics["singular_values"]</code></pre>
+
+    <h3>Example: Tensor Decomposition</h3>
+    <pre><code>input tensor: instance x sample x channel
+
+outputs:
+  factor_tables["instance"] -> instance factors
+  factor_tables["sample"]   -> sample factors
+  factor_tables["channel"]  -> channel factors
+  component_tensors["components"] -> rank-1 terms or reconstructed component tensors</code></pre>
+
+    <h2>14. Query Semantics</h2>
+    <p>
+      Querying should be generic and metadata-driven. The library should not interpret metadata field names,
+      only expose a uniform mechanism for filtering and selecting by metadata.
+    </p>
+
+    <pre><code>view = ds.query("instance", "label == 'target' and qc_pass and score > 0.8")
+view = ds.query("channel", "group in ['A', 'B']")
+view = ds.slice("sample", 100, 900)</code></pre>
+
+    <p>
+      This avoids repeatedly passing data tables around and makes compiled datasets practical.
+    </p>
+
+    <h2>15. Strong Naming Recommendations</h2>
+    <ul>
+      <li><code>instance_id</code> should be the canonical join key for the instance axis.</li>
+      <li><code>channel_id</code> and <code>sample_index</code> should be used consistently when those axes exist.</li>
+      <li>Waveform-like component arrays should always declare axes explicitly.</li>
+      <li>Never require consumers to guess reshape rules from a flat array.</li>
+    </ul>
+
+    <h2>16. What Not To Do</h2>
+    <ul>
+      <li>Do not return flat matrices with undocumented reshape assumptions.</li>
+      <li>Do not return event or instance scores without stable ids.</li>
+      <li>Do not bury important metadata inside opaque pickled blobs.</li>
+      <li>Do not encode domain-specific columns as required fields in the spec.</li>
+      <li>Do not assume all consumers are Python-only forever.</li>
+    </ul>
+
+    <h2>17. Minimal v1 Scope</h2>
+    <p>
+      A narrow first version of the external tensor library can still be useful if it supports the following:
+    </p>
+    <ol>
+      <li>Open a dataset lazily from a manifest-backed on-disk bundle.</li>
+      <li>Expose axis metadata tables and stable ids.</li>
+      <li>Query and filter lightweight views by metadata.</li>
+      <li>Concatenate multiple datasets along <code>instance</code>.</li>
+      <li>Run a decomposition on a selected view.</li>
+      <li>Return factor tables keyed by the original stable ids.</li>
+      <li>Return component tensors with explicit axis names and coordinates.</li>
+    </ol>
+
+    <div class="card">
+      <h2>18. Recommended v1 Bundle Example</h2>
+      <pre><code>compiled_dataset/
+  manifest.json
+  arrays/
+    data.zarr
+  meta/
+    instance.parquet
+    sample.parquet
+    channel.parquet
+  partitions/
+    files.parquet
+    groups.parquet
+
+decomposition_result/
+  manifest.json
+  factor_tables/
+    instance.parquet
+    sample.parquet
+    channel.parquet
+  components/
+    components.zarr
+  diagnostics.json</code></pre>
+    </div>
+
+    <p class="muted">
+      This specification intentionally avoids domain assumptions. Any application-specific metadata should be
+      represented as arbitrary axis metadata columns or global attributes, not hardcoded schema requirements.
+    </p>
+  </div>
+</body>
+</html>
