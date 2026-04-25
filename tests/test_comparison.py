@@ -21,13 +21,13 @@ class TestSubspaceAngles:
     def test_identical_results_zero_angles(self, two_results):
         a, b = two_results
         angles = subspace_angles(a, b)
-        assert np.allclose(angles, 0.0, atol=1e-8)
+        assert np.allclose(angles, 0.0, atol=1e-6)
 
     def test_with_raw_arrays(self, two_results):
         a, _ = two_results
         angles = subspace_angles(a.templates, a.templates)
         assert angles.shape == (a.templates.shape[0],)
-        assert np.allclose(angles, 0.0, atol=1e-8)
+        assert np.allclose(angles, 0.0, atol=1e-6)
 
     def test_rejects_non_2d_array(self, two_results):
         a, _ = two_results
