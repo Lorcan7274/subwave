@@ -33,7 +33,6 @@ dependencies = [
 [project.optional-dependencies]
 mne = ["mne>=1.0"]
 yasa = ["yasa>=0.6"]
-storage = ["zarr>=2.10", "pyarrow>=8.0"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -41,7 +40,7 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/Lorcan7274/SpindleDecomp"
+Repository = "https://github.com/Lorcan7274/subwave"
 
 [tool.hatch.version]
 path = "src/subwave/_version.py"

@@ -92,6 +92,29 @@ def _svd(
     )
 
 
+def _incremental_evr(
+    target: np.ndarray, loadings: np.ndarray, templates: np.ndarray
+) -> np.ndarray:
+    """Per-component explained variance ratio via incremental rank-k reconstruction.
+
+    For each k = 1..K, fit residual variance of ``loadings[:, :k] @ templates[:k]``
+    against ``target`` and report the marginal drop in residual variance.
+    Components that increase residual variance are reported as 0.
+    """
+    total_var = float((target ** 2).sum())
+    if total_var <= 0:
+        return np.zeros(templates.shape[0])
+    K = templates.shape[0]
+    cumulative = np.zeros(K)
+    prev_resid = total_var
+    for k in range(1, K + 1):
+        approx = loadings[:, :k] @ templates[:k]
+        resid = float(((target - approx) ** 2).sum())
+        cumulative[k - 1] = max(0.0, (prev_resid - resid)) / total_var
+        prev_resid = min(prev_resid, resid)
+    return cumulative
+
+
 def _nmf(
     X: np.ndarray,
     n_components: int,
@@ -111,10 +134,7 @@ def _nmf(
     templates = model.components_
 
     residuals = X - loadings @ templates
-    total_var = ((X - X.mean(axis=0)) ** 2).sum()
-    explained = total_var - (residuals ** 2).sum()
-    per_comp = explained / total_var / n_components if total_var > 0 else 0.0
-    evr = np.full(n_components, per_comp)
+    evr = _incremental_evr(X - X.mean(axis=0), loadings, templates)
     sv = np.linalg.norm(templates, axis=1)
 
     return _build_result(
@@ -143,10 +163,7 @@ def _dictlearn(
     templates = model.components_
 
     residuals = Xc - loadings @ templates
-    total_var = (Xc ** 2).sum()
-    explained = total_var - (residuals ** 2).sum()
-    per_comp = explained / total_var / n_components if total_var > 0 else 0.0
-    evr = np.full(n_components, per_comp)
+    evr = _incremental_evr(Xc, loadings, templates)
     sv = np.linalg.norm(templates, axis=1)
 
     return _build_result(

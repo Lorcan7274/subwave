@@ -93,11 +93,16 @@ def decompose(
     inst_pos = aat.axis_pos(instance_axis)
     samp_pos = aat.axis_pos(sample_axis)
 
-    # Only 2-D (instance × sample) supported for now; multi-channel flattened
+    # 2-D inputs decompose directly. 3-D inputs are flattened by C-order
+    # reshape into a single (n_instances, n_samples * n_channels) feature
+    # vector per event; the resulting templates concatenate per-channel
+    # waveforms in the same order the channel axis appears in `aat`. This is
+    # the simplest cross-channel approach but does not factor channel
+    # structure separately — for a true tensor decomposition use a dedicated
+    # tool (e.g. PARAFAC). The instance axis must be axis 0.
     if aat.ndim == 2:
         X = aat.data if inst_pos == 0 else aat.data.T
     elif aat.ndim == 3:
-        # Flatten to instance × (sample * channel)
         if inst_pos != 0:
             raise ValueError("instance axis must be axis 0 for 3-D tensors")
         X = aat.data.reshape(aat.data.shape[0], -1)

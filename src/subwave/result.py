@@ -87,15 +87,22 @@ class DecompositionResult:
     # ------------------------------------------------------------------
 
     def outlier_scores(self, n_components: int | None = None) -> np.ndarray:
-        """L2 norm of per-event reconstruction residuals."""
-        rec = self.reconstruct(n_components=n_components)
-        X_approx = self.mean_waveform + rec if self.config.get("center") else rec
-        X_full = (
-            self.mean_waveform + self.loadings @ self.templates
-            if self.config.get("center")
-            else self.loadings @ self.templates
-        )
-        return np.linalg.norm(X_full - X_approx, axis=1)
+        """L2 norm of per-event reconstruction residuals.
+
+        With ``n_components=None`` (default), returns ``||residual_i||`` from the
+        full decomposition (i.e. the residual stored on this result).
+
+        With an integer ``n_components < self.templates.shape[0]``, recomputes
+        residuals against a rank-k truncated reconstruction so events poorly
+        captured by the leading k components score high.
+        """
+        K = self.templates.shape[0]
+        if n_components is None or n_components >= K:
+            return np.linalg.norm(self.residuals, axis=1)
+        k = max(int(n_components), 0)
+        approx_k = self.loadings[:, :k] @ self.templates[:k]
+        target = self.residuals + self.loadings @ self.templates
+        return np.linalg.norm(target - approx_k, axis=1)
 
     def reconstruct(self, n_components: int | None = None) -> np.ndarray:
         """Rank-k reconstruction of the (mean-centered) event matrix."""
@@ -147,6 +154,14 @@ class DecompositionResult:
     def plot_residual_hist(self, **kwargs):
         from .plotting import plot_residual_hist
         return plot_residual_hist(self, **kwargs)
+
+    def plot_loadings_by_group(self, groups, comp: int = 0, **kwargs):
+        from .plotting import plot_loadings_by_group
+        return plot_loadings_by_group(self, groups, comp=comp, **kwargs)
+
+    def plot_template_spectra(self, sfreq: float | None = None, **kwargs):
+        from .plotting import plot_template_spectra
+        return plot_template_spectra(self, sfreq=sfreq, **kwargs)
 
     def __repr__(self) -> str:
         n_events = len(self.factor_tables["instance"])

@@ -15,7 +15,6 @@ Optional extras:
 ```bash
 pip install "subwave[mne]"      # MNE-Python I/O
 pip install "subwave[yasa]"     # YASA spindle detection I/O
-pip install "subwave[storage]"  # zarr/parquet on-disk bundles
 ```
 
 ## Quickstart

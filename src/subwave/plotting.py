@@ -113,3 +113,79 @@ def plot_residual_hist(result, ax=None):
     ax.set_ylabel("Count")
     ax.set_title("Reconstruction residual distribution")
     return ax
+
+
+def plot_loadings_by_group(result, groups, comp: int = 0, kind: str = "box", ax=None):
+    """Distribution of loadings on component *comp* split by group label.
+
+    Parameters
+    ----------
+    result:
+        A :class:`DecompositionResult`.
+    groups:
+        1-D array-like of group labels, length ``n_events``.
+    comp:
+        Component index (0-based).
+    kind:
+        ``'box'`` (default) or ``'violin'``.
+    """
+    import matplotlib.pyplot as plt
+
+    groups = np.asarray(groups)
+    loadings = result.loadings[:, comp]
+    if groups.shape[0] != loadings.shape[0]:
+        raise ValueError(
+            f"groups length {groups.shape[0]} != n_events {loadings.shape[0]}"
+        )
+
+    labels = list(np.unique(groups))
+    data = [loadings[groups == lbl] for lbl in labels]
+
+    fig, ax = (None, ax) if ax is not None else plt.subplots()
+    positions = np.arange(1, len(labels) + 1)
+    if kind == "violin":
+        ax.violinplot(data, positions=positions, showmedians=True)
+    elif kind == "box":
+        ax.boxplot(data, positions=positions, labels=[str(l) for l in labels])
+    else:
+        raise ValueError(f"kind must be 'box' or 'violin', got {kind!r}")
+    ax.set_xticks(positions)
+    ax.set_xticklabels([str(l) for l in labels])
+    ax.set_xlabel("Group")
+    ax.set_ylabel(f"Loading on component {comp + 1}")
+    ax.set_title(f"Loadings on Component {comp + 1} by group")
+    return ax
+
+
+def plot_template_spectra(result, sfreq: float | None = None, n: int | None = None,
+                          log: bool = True, ax=None):
+    """Magnitude spectra (rfft) of each template waveform.
+
+    Parameters
+    ----------
+    sfreq:
+        Sampling frequency in Hz; defaults to ``result.config['sfreq']`` or 1.
+    n:
+        Number of leading templates to plot (default: all).
+    log:
+        If True (default), plot magnitude on a log scale.
+    """
+    import matplotlib.pyplot as plt
+
+    sf = sfreq or result.config.get("sfreq", 1.0)
+    templates = result.templates
+    k = templates.shape[0] if n is None else min(n, templates.shape[0])
+    n_samples = templates.shape[1]
+    freqs = np.fft.rfftfreq(n_samples, d=1.0 / sf)
+
+    fig, ax = (None, ax) if ax is not None else plt.subplots()
+    for i in range(k):
+        mag = np.abs(np.fft.rfft(templates[i]))
+        ax.plot(freqs, mag, label=f"Comp {i + 1}")
+    if log:
+        ax.set_yscale("log")
+    ax.set_xlabel("Frequency (Hz)" if sf != 1.0 else "Frequency (cycles/sample)")
+    ax.set_ylabel("|FFT|")
+    ax.set_title("Template spectra")
+    ax.legend(fontsize=8, ncol=min(k, 3))
+    return ax
