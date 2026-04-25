@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "subwave"
+abstract: "Matrix decomposition of neurophysiological event waveform populations."
+authors:
+  - family-names: "Purcell"
+    given-names: "Lorcan"
+version: "0.1.0"
+date-released: "2026-04-25"
+license: "MIT"
+repository-code: "https://github.com/Lorcan7274/subwave"
+keywords:
+  - sleep
+  - EEG
+  - spindle
+  - decomposition
+  - NMF
+  - SVD
