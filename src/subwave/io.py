@@ -103,6 +103,59 @@ def from_mne(epochs) -> EventMatrix:
     return EventMatrix(data, sfreq=epochs.info["sfreq"])
 
 
+def from_luna(
+    spindle_file: str | Path,
+    edf_file: str | Path,
+    sfreq: float | None = None,
+    window_sec: float = 1.0,
+) -> EventMatrix:
+    """Load events from a Luna per-spindle output and an EDF file.
+
+    The spindle file is a tab/whitespace-delimited text table with columns
+    ``START`` and ``STOP`` (seconds), or alternatively ``PEAK_SEC``
+    (or ``PEAK``) with a peak time in seconds.
+    """
+    try:
+        import mne
+    except ImportError as exc:
+        raise ImportError("mne is required: pip install subwave[mne]") from exc
+
+    raw = mne.io.read_raw_edf(str(edf_file), preload=True, verbose="ERROR")
+    sf = float(raw.info["sfreq"]) if sfreq is None else float(sfreq)
+    signal = raw.get_data()[0]
+
+    df = pd.read_csv(str(spindle_file), sep=None, engine="python")
+    cols = {c.upper(): c for c in df.columns}
+
+    centers: list[float] = []
+    if "START" in cols and "STOP" in cols:
+        starts = df[cols["START"]].astype(float).values
+        stops = df[cols["STOP"]].astype(float).values
+        centers = list(0.5 * (starts + stops))
+    elif "PEAK_SEC" in cols:
+        centers = list(df[cols["PEAK_SEC"]].astype(float).values)
+    elif "PEAK" in cols:
+        centers = list(df[cols["PEAK"]].astype(float).values)
+    else:
+        raise ValueError(
+            "Luna spindle file must have START/STOP columns or PEAK_SEC/PEAK"
+        )
+
+    half = int(window_sec * sf)
+    waveforms = []
+    for c in centers:
+        center_idx = int(c * sf)
+        start, end = center_idx - half, center_idx + half
+        if start < 0 or end > len(signal):
+            continue
+        waveforms.append(signal[start:end])
+
+    if not waveforms:
+        raise ValueError("No valid windows could be extracted from the EDF.")
+
+    return EventMatrix(np.stack(waveforms), sfreq=sf)
+
+
 def from_yasa(
     spindles_df,
     raw: np.ndarray,

@@ -86,3 +86,30 @@ class TestPermutationTest:
         groups = np.array([0] * 5 + [1] * 5 + [2] * 10)
         with pytest.raises(ValueError, match="exactly two groups"):
             permutation_test(small_matrix, groups, n_components=2, n_perm=2)
+
+
+class TestLoadingTest:
+    def test_returns_dataframe(self, small_matrix):
+        from subwave.comparison import loading_test
+        em = sw.from_array(small_matrix, sfreq=64.0)
+        result = em.decompose(method="svd", n_components=3)
+        groups = np.array([0] * 10 + [1] * 10)
+        df = loading_test(result, groups, n_perm=50, random_state=0)
+        assert list(df.columns) == ["component", "observed_diff", "p_value"]
+        assert len(df) == 3
+        assert df["p_value"].between(0.0, 1.0).all()
+
+    def test_mismatched_groups(self, small_matrix):
+        from subwave.comparison import loading_test
+        em = sw.from_array(small_matrix, sfreq=64.0)
+        result = em.decompose(method="svd", n_components=2)
+        with pytest.raises(ValueError, match="groups length"):
+            loading_test(result, np.array([0, 1]), n_perm=10)
+
+    def test_requires_two_groups(self, small_matrix):
+        from subwave.comparison import loading_test
+        em = sw.from_array(small_matrix, sfreq=64.0)
+        result = em.decompose(method="svd", n_components=2)
+        groups = np.array([0] * 5 + [1] * 5 + [2] * 10)
+        with pytest.raises(ValueError, match="exactly two groups"):
+            loading_test(result, groups, n_perm=10)

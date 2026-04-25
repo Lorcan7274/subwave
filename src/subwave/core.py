@@ -24,7 +24,7 @@ AlignMode = Literal["peak", "trough", "onset", "midpoint", "none"]
 def decompose(
     source: Union["AxisAnnotatedTensor", "TensorView", np.ndarray],
     method: Literal["svd", "nmf", "dictlearn"] = "svd",
-    n_components: int = 5,
+    n_components: int | str = 5,
     center: bool = True,
     normalize: NormalizeMode = "none",
     align: AlignMode = "none",
@@ -144,7 +144,20 @@ def decompose(
     if X.shape[0] < 2:
         raise ValueError("Need at least 2 instances to decompose.")
 
-    k = min(n_components, X.shape[0], X.shape[1])
+    if isinstance(n_components, str):
+        if n_components != "auto":
+            raise ValueError(
+                f"n_components must be an int or 'auto', got {n_components!r}"
+            )
+        if method != "svd":
+            raise ValueError("n_components='auto' is only supported with method='svd'")
+        from .selection import parallel_analysis
+        Xc_for_pa = X - X.mean(axis=0, keepdims=True) if center else X
+        k_auto = parallel_analysis(Xc_for_pa, n_iter=50, center=False)
+        n_components = max(int(k_auto), 1)
+        config["n_components"] = n_components
+
+    k = min(int(n_components), X.shape[0], X.shape[1])
     return run_decomposition(
         X,
         method=method,

@@ -51,6 +51,18 @@ class TestPlotScatter:
         ax = result.plot_scatter(x=0, y=1)
         assert ax is not None
 
+    def test_int_color(self, result):
+        import numpy as np
+        labels = np.array([0] * 10 + [1] * 10)
+        ax = result.plot_scatter(x=0, y=1, color=labels)
+        assert ax is not None
+
+    def test_float_color(self, result):
+        import numpy as np
+        values = np.linspace(0, 1, 20)
+        ax = result.plot_scatter(x=0, y=1, color=values, label="metric")
+        assert ax is not None
+
 
 class TestPlotSortedGrid:
     def test_returns_axes_array(self, result):
@@ -107,3 +119,81 @@ class TestPlotTemplatesSingle:
     def test_n_equals_one(self, result):
         axes = result.plot_templates(n=1)
         assert len(axes) == 1
+
+
+class TestPlotHeatmap:
+    def test_returns_axes(self, result):
+        ax = result.plot_heatmap(comp=0)
+        assert ax is not None
+
+    def test_uncentered(self, small_matrix):
+        from subwave import from_array
+        em = from_array(small_matrix, sfreq=64.0)
+        result = em.decompose(method="svd", n_components=3, center=False)
+        ax = result.plot_heatmap(comp=1)
+        assert ax is not None
+
+
+class TestPlotWaterfall:
+    def test_returns_axes_subset(self, result):
+        ax = result.plot_waterfall(n=5)
+        assert ax is not None
+
+    def test_returns_axes_all(self, result):
+        ax = result.plot_waterfall(n=200)
+        assert ax is not None
+
+    def test_uncentered(self, small_matrix):
+        from subwave import from_array
+        em = from_array(small_matrix, sfreq=64.0)
+        result = em.decompose(method="svd", n_components=3, center=False)
+        ax = result.plot_waterfall(n=10)
+        assert ax is not None
+
+
+class TestPlotCumulativeVariance:
+    def test_returns_axes(self, result):
+        ax = result.plot_cumulative_variance()
+        assert ax is not None
+
+
+class TestPlotLoadingsOverTime:
+    def test_default_all_components(self, result):
+        import numpy as np
+        times = np.linspace(0, 100, 20)
+        ax = result.plot_loadings_over_time(times)
+        assert ax is not None
+
+    def test_subset_of_comps(self, result):
+        import numpy as np
+        times = np.linspace(0, 100, 20)
+        ax = result.plot_loadings_over_time(times, comps=[0, 1], window=5)
+        assert ax is not None
+
+    def test_window_larger_than_series(self, result):
+        import numpy as np
+        times = np.linspace(0, 100, 20)
+        ax = result.plot_loadings_over_time(times, window=100)
+        assert ax is not None
+
+    def test_mismatched_length(self, result):
+        import numpy as np
+        with pytest.raises(ValueError, match="event_times length"):
+            result.plot_loadings_over_time(np.array([0.0, 1.0]))
+
+
+class TestPlotReconstruction:
+    def test_full_rank(self, result):
+        ax = result.plot_reconstruction(event_idx=3)
+        assert ax is not None
+
+    def test_rank_k(self, result):
+        ax = result.plot_reconstruction(event_idx=0, n_components=2)
+        assert ax is not None
+
+    def test_uncentered(self, small_matrix):
+        from subwave import from_array
+        em = from_array(small_matrix, sfreq=64.0)
+        result = em.decompose(method="svd", n_components=3, center=False)
+        ax = result.plot_reconstruction(event_idx=0, n_components=2)
+        assert ax is not None

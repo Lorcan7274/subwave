@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -119,6 +122,45 @@ class DecompositionResult:
             X = X - self.mean_waveform
         return X @ self.templates.T
 
+    def cluster(self, method: str = "kmeans", n_clusters: int = 2, **kwargs) -> dict:
+        """Cluster events in loadings space."""
+        from .clustering import cluster_loadings
+        return cluster_loadings(self.loadings, method=method, n_clusters=n_clusters, **kwargs)
+
+    def cluster_templates(self, n_clusters: int = 2, method: str = "kmeans") -> np.ndarray:
+        """Mean waveform per cluster. Returns (n_clusters, n_samples)."""
+        cr = self.cluster(method=method, n_clusters=n_clusters)
+        if self.config.get("center"):
+            X_full = self.mean_waveform + self.loadings @ self.templates
+        else:
+            X_full = self.loadings @ self.templates
+        return np.stack(
+            [X_full[cr["labels"] == k].mean(axis=0) for k in range(n_clusters)]
+        )
+
+    def template_spectrum(self, sfreq: float) -> tuple[np.ndarray, np.ndarray]:
+        """Returns (freqs, powers). freqs: (n_freqs,). powers: (n_components, n_freqs)."""
+        n = self.templates.shape[1]
+        freqs = np.fft.rfftfreq(n, d=1.0 / sfreq)
+        powers = np.abs(np.fft.rfft(self.templates, axis=1)) ** 2
+        return freqs, powers
+
+    def template_peak_freq(self, sfreq: float) -> np.ndarray:
+        """Peak frequency of each template in Hz. Returns (n_components,)."""
+        freqs, powers = self.template_spectrum(sfreq)
+        return freqs[np.argmax(powers, axis=1)]
+
+    def template_bandwidth(self, sfreq: float) -> np.ndarray:
+        """Half-power bandwidth of dominant peak per template. Returns (n_components,)."""
+        freqs, powers = self.template_spectrum(sfreq)
+        bw = np.zeros(powers.shape[0])
+        for i, row in enumerate(powers):
+            peak = row.max()
+            indices = np.where(row >= peak / 2)[0]
+            if len(indices) >= 2:
+                bw[i] = freqs[indices[-1]] - freqs[indices[0]]
+        return bw
+
     def subspace_angles(self, other: "DecompositionResult") -> np.ndarray:
         """Principal angles (radians) between two decomposition subspaces."""
         Q1, _ = np.linalg.qr(self.templates.T)
@@ -162,6 +204,104 @@ class DecompositionResult:
     def plot_template_spectra(self, sfreq: float | None = None, **kwargs):
         from .plotting import plot_template_spectra
         return plot_template_spectra(self, sfreq=sfreq, **kwargs)
+
+    def plot_heatmap(self, comp: int = 0, sfreq: float | None = None, **kwargs):
+        from .plotting import plot_heatmap
+        return plot_heatmap(self, comp=comp, sfreq=sfreq, **kwargs)
+
+    def plot_waterfall(self, n: int = 100, sfreq: float | None = None, **kwargs):
+        from .plotting import plot_waterfall
+        return plot_waterfall(self, n=n, sfreq=sfreq, **kwargs)
+
+    def plot_cumulative_variance(self, **kwargs):
+        from .plotting import plot_cumulative_variance
+        return plot_cumulative_variance(self, **kwargs)
+
+    def plot_reconstruction(self, event_idx: int, n_components: int | None = None,
+                            sfreq: float | None = None, **kwargs):
+        from .plotting import plot_reconstruction
+        return plot_reconstruction(self, event_idx=event_idx,
+                                   n_components=n_components, sfreq=sfreq, **kwargs)
+
+    def scatter_colored_by(self, values, x: int = 0, y: int = 1,
+                           label: str | None = None, **kwargs):
+        """Scatter colored by a per-event values array."""
+        from .plotting import plot_scatter
+        return plot_scatter(self, x=x, y=y, color=values, label=label, **kwargs)
+
+    def loadings_correlated_with(self, values) -> pd.DataFrame:
+        """Pearson r and p for each component vs *values*.
+
+        Returns DataFrame with columns ``component``, ``r``, ``p_value``.
+        """
+        from scipy.stats import pearsonr
+
+        v = np.asarray(values, dtype=float)
+        if v.shape[0] != self.loadings.shape[0]:
+            raise ValueError("values length must match number of events")
+
+        rows = []
+        for i in range(self.loadings.shape[1]):
+            r, p = pearsonr(self.loadings[:, i], v)
+            rows.append({"component": i + 1, "r": float(r), "p_value": float(p)})
+        return pd.DataFrame(rows)
+
+    def plot_loadings_over_time(self, event_times, comps=None, window: int = 20, **kwargs):
+        from .plotting import plot_loadings_over_time
+        return plot_loadings_over_time(self, event_times, comps=comps, window=window, **kwargs)
+
+    def save(self, path: str | Path) -> None:
+        """Save to ``.npz``.
+
+        Stores: ``templates``, ``loadings``, ``singular_values``,
+        ``explained_variance_ratio``, ``mean_waveform``, ``residuals``,
+        ``config`` (JSON string), and ``method``.
+        """
+        np.savez(
+            str(path),
+            templates=self.templates,
+            loadings=self.loadings,
+            singular_values=self.singular_values,
+            explained_variance_ratio=self.explained_variance_ratio,
+            mean_waveform=self.mean_waveform,
+            residuals=self.residuals,
+            config=np.array(json.dumps(self.config)),
+            method=np.array(self.method),
+            instance_ids=np.asarray(self.factor_tables["instance"]["instance_id"].values),
+        )
+
+    @staticmethod
+    def load(path: str | Path) -> "DecompositionResult":
+        """Load a result previously saved with :meth:`save`."""
+        from .decomposition import _build_result
+
+        d = np.load(str(path), allow_pickle=False)
+        templates = d["templates"]
+        loadings = d["loadings"]
+        sv = d["singular_values"]
+        evr = d["explained_variance_ratio"]
+        mean_waveform = d["mean_waveform"]
+        residuals = d["residuals"]
+        config = json.loads(str(d["config"]))
+        method = str(d["method"])
+        instance_ids = d["instance_ids"]
+
+        return _build_result(
+            method=method,
+            config=config,
+            templates=templates,
+            loadings=loadings,
+            singular_values=sv,
+            evr=evr,
+            mean_waveform=mean_waveform,
+            residuals=residuals,
+            instance_ids=instance_ids,
+            sample_axis_index=None,
+        )
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """Loadings + ``recon_error`` as a flat DataFrame."""
+        return self.factor_tables["instance"].copy()
 
     def __repr__(self) -> str:
         n_events = len(self.factor_tables["instance"])

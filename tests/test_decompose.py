@@ -225,3 +225,74 @@ class TestResultMethods:
         rec = result.mean_waveform + result.reconstruct(n_components=k)
         rel_err = np.linalg.norm(event_matrix.data - rec) / np.linalg.norm(event_matrix.data)
         assert rel_err < 0.05
+
+
+class TestSpectral:
+    def test_spectrum_shapes(self, event_matrix):
+        result = event_matrix.decompose(method="svd", n_components=3)
+        freqs, powers = result.template_spectrum(sfreq=64.0)
+        assert freqs.shape == (33,)
+        assert powers.shape == (3, 33)
+        assert np.all(powers >= 0)
+
+    def test_peak_freq_positive(self, event_matrix):
+        result = event_matrix.decompose(method="svd", n_components=3)
+        peaks = result.template_peak_freq(sfreq=64.0)
+        assert peaks.shape == (3,)
+        assert np.all(peaks > 0)
+
+    def test_bandwidth_nonneg(self, event_matrix):
+        result = event_matrix.decompose(method="svd", n_components=3)
+        bw = result.template_bandwidth(sfreq=64.0)
+        assert bw.shape == (3,)
+        assert np.all(bw >= 0)
+
+
+class TestAutoNComponents:
+    def test_auto_returns_at_least_one(self, small_matrix):
+        from subwave import decompose
+        result = decompose(small_matrix, n_components="auto")
+        assert result.templates.shape[0] >= 1
+
+    def test_auto_rejects_nmf(self, nonneg_matrix):
+        from subwave import decompose
+        with pytest.raises(ValueError, match="only supported with method='svd'"):
+            decompose(nonneg_matrix, method="nmf", n_components="auto")
+
+    def test_invalid_string(self, small_matrix):
+        from subwave import decompose
+        with pytest.raises(ValueError, match="must be an int or 'auto'"):
+            decompose(small_matrix, n_components="foo")
+
+
+class TestRandomizedSVD:
+    def test_large_input_uses_randomized(self, rng):
+        from subwave import from_array
+        X = rng.standard_normal((5001, 32))
+        em = from_array(X, sfreq=1.0)
+        result = em.decompose(method="svd", n_components=5)
+        assert result.templates.shape == (5, 32)
+        assert result.loadings.shape == (5001, 5)
+
+
+class TestMetadataMethods:
+    def test_loadings_correlated_with(self, event_matrix):
+        result = event_matrix.decompose(method="svd", n_components=3)
+        values = np.linspace(0, 1, 20)
+        df = result.loadings_correlated_with(values)
+        assert list(df.columns) == ["component", "r", "p_value"]
+        assert len(df) == 3
+        assert df["r"].between(-1.0, 1.0).all()
+
+    def test_loadings_correlated_with_mismatched(self, event_matrix):
+        result = event_matrix.decompose(method="svd", n_components=2)
+        with pytest.raises(ValueError, match="values length"):
+            result.loadings_correlated_with(np.array([0.0, 1.0]))
+
+    def test_scatter_colored_by(self, event_matrix):
+        import matplotlib
+        matplotlib.use("Agg")
+        result = event_matrix.decompose(method="svd", n_components=3)
+        values = np.linspace(0, 1, 20)
+        ax = result.scatter_colored_by(values, label="metric")
+        assert ax is not None

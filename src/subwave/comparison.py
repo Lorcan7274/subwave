@@ -85,6 +85,60 @@ def _decompose_array(X: np.ndarray, n_components: int, method: str, center: bool
     )
 
 
+def loading_test(
+    result,
+    groups: np.ndarray,
+    n_perm: int = 1000,
+    random_state: int | np.random.Generator | None = None,
+):
+    """Per-component permutation test on group mean loading difference.
+
+    Splits events by *groups* (which must contain exactly two distinct labels)
+    and tests, for each component, whether the difference of mean loadings
+    differs from chance under random label permutations.
+
+    Returns a DataFrame with columns ``component``, ``observed_diff``,
+    ``p_value``.
+    """
+    import pandas as pd
+
+    groups = np.asarray(groups)
+    loadings = np.asarray(result.loadings, dtype=float)
+    if groups.shape[0] != loadings.shape[0]:
+        raise ValueError("groups length must match number of events")
+
+    labels = np.unique(groups)
+    if labels.size != 2:
+        raise ValueError(
+            f"loading_test requires exactly two groups, got {labels.size}"
+        )
+
+    rng = np.random.default_rng(random_state)
+    mask_a = groups == labels[0]
+    n_components = loadings.shape[1]
+
+    observed = loadings[mask_a].mean(axis=0) - loadings[~mask_a].mean(axis=0)
+
+    null = np.empty((n_perm, n_components))
+    n_a = int(mask_a.sum())
+    indices = np.arange(loadings.shape[0])
+    for i in range(n_perm):
+        perm = rng.permutation(indices)
+        m = np.zeros_like(mask_a)
+        m[perm[:n_a]] = True
+        null[i] = loadings[m].mean(axis=0) - loadings[~m].mean(axis=0)
+
+    p = (np.sum(np.abs(null) >= np.abs(observed), axis=0) + 1) / (n_perm + 1)
+
+    return pd.DataFrame(
+        {
+            "component": np.arange(1, n_components + 1),
+            "observed_diff": observed,
+            "p_value": p,
+        }
+    )
+
+
 def permutation_test(
     X: np.ndarray,
     groups: np.ndarray,

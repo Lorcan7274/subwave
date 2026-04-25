@@ -74,7 +74,12 @@ def _svd(
     mean_waveform = X.mean(axis=0) if config["center"] else np.zeros(X.shape[1])
     Xc = X - mean_waveform if config["center"] else X
 
-    U, s, Vh = np.linalg.svd(Xc, full_matrices=False)
+    if X.shape[0] > 5000:
+        from sklearn.utils.extmath import randomized_svd
+        k_req = min(n_components, min(Xc.shape) - 1)
+        U, s, Vh = randomized_svd(Xc, n_components=k_req, random_state=0)
+    else:
+        U, s, Vh = np.linalg.svd(Xc, full_matrices=False)
     k = min(n_components, len(s))
 
     templates = Vh[:k]
