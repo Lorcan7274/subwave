@@ -1,8 +1,6 @@
 # subwave
 
-Matrix decomposition of neurophysiological event waveform populations — sleep spindles, ECG heartbeats, EMG bursts, and any other detected event type.
-
-Stacks detected events into an (n_events × n_samples) matrix and applies SVD, NMF, or dictionary learning to extract principal waveform templates, per-event scores, and reconstruction diagnostics.
+Data-driven decomposition of neurophysiological event waveform populations.
 
 ## Install
 
