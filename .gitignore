@@ -214,8 +214,11 @@ __marimo__/
 data/ecg_event_decomp_waveforms.npz
 
 # Personal/generated files
-claude_instructions.md
-compass_artifact_wf-*.md
+docs/claude_instructions.md
+docs/compass_artifact_wf-*.md
 
 # Scratch notebooks
-Untitled.ipynb
+notebooks/Untitled.ipynb
+
+# gitignore
+.gitignore
