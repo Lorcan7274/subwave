@@ -111,6 +111,57 @@ result.cluster_templates(n_clusters=2)  # mean waveform per cluster
 ```python
 perm = sw.permutation_test(X, groups, n_components=3, n_perm=500)
 perm.p_value                            # do two groups span different subspaces?
+
+df = sw.comparison.loading_test(result, groups, n_perm=1000)
+# Columns: component, observed_diff, p_value, cohens_d, p_corrected
+# cohens_d:    standardized effect size (pooled SD)
+# p_corrected: Benjamini-Hochberg FDR-adjusted p-values across components
+```
+
+## Spindle helpers
+
+Convenience routines for sleep-spindle waveforms (sigma-band filtering,
+envelope-based alignment, canonical templates).
+
+```python
+from subwave.spindles import (
+    sigma_filter,             # 9–16 Hz Butterworth bandpass (sosfiltfilt)
+    align_by_envelope_peak,   # circularly shift so each event's sigma-envelope peak is centered
+    CANONICAL_FAST,           # ~13.5 Hz Gaussian-windowed sinusoid (256 Hz, 1 s)
+    CANONICAL_SLOW,           # ~11 Hz   Gaussian-windowed sinusoid (256 Hz, 1 s)
+)
+
+X_filt = sigma_filter(X, sfreq=256)
+X_aligned = align_by_envelope_peak(X, sfreq=256)
+```
+
+## Validation
+
+Tools for checking decompositions against ground truth and for
+estimating component reliability.
+
+```python
+from subwave.validation import (
+    synthetic_population,   # generate events from known templates with noise / jitter / amplitude variability
+    recovery_score,         # cosine similarity between true and recovered templates (Hungarian-matched)
+    cluster_recovery_ari,   # Adjusted Rand Index between true and recovered cluster labels
+    bootstrap_stability,    # mean cosine similarity of bootstrap-resampled templates to full-data templates
+    split_half,             # template & loading reproducibility on odd/even split
+)
+
+# Ground-truth recovery on synthetic data
+truth = synthetic_population(templates, n_events=200, noise_std=0.1, random_state=0)
+result = sw.decompose(truth["X"], method="svd", n_components=truth["templates"].shape[0])
+score = recovery_score(truth["templates"], result.templates)
+score["mean_score"]            # cosine similarity (1.0 = perfect)
+
+# Reliability of a real decomposition
+boot = bootstrap_stability(X, n_components=3, n_boot=100, random_state=0)
+boot["stability_scores"]       # per-component mean similarity across bootstraps
+
+sh = split_half(X, n_components=3, random_state=0)
+sh["template_similarity"]      # per-component template reproducibility
+sh["loading_correlation"]      # correlation of projected vs native loadings
 ```
 
 ## Serialization
