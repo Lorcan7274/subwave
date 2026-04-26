@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Matrix decomposition of neurophysiological event waveform populations"
 readme = "README.md"
 license = { file = "LICENSE" }
-authors = [{ name = "Lorcan Purcell" }]
+authors = [{ name = "Lorcan Purcell", email = "1w3r5yviper2077@gmail.com" }]
 requires-python = ">=3.9"
 keywords = ["sleep", "EEG", "spindle", "decomposition", "NMF", "SVD"]
 classifiers = [
@@ -50,7 +50,6 @@ packages = ["src/subwave"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=subwave --cov-report=term-missing"
 
 [tool.coverage.run]
 source = ["src/subwave"]

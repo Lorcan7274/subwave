@@ -220,3 +220,13 @@ docs/compass_artifact_wf-*.md
 # Scratch notebooks
 notebooks/Untitled.ipynb
 
+
+# local testing
+spindle_test.py
+test.py
+subwave_results/
+CLAUDE.md
+REFERENCE.md
+spindle_download.py
+ECG_test.py
+*.npz
