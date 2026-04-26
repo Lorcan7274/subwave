@@ -95,9 +95,19 @@ class TestLoadingTest:
         result = em.decompose(method="svd", n_components=3)
         groups = np.array([0] * 10 + [1] * 10)
         df = loading_test(result, groups, n_perm=50, random_state=0)
-        assert list(df.columns) == ["component", "observed_diff", "p_value"]
+        assert list(df.columns) == [
+            "component",
+            "observed_diff",
+            "p_value",
+            "cohens_d",
+            "p_corrected",
+        ]
         assert len(df) == 3
         assert df["p_value"].between(0.0, 1.0).all()
+        assert df["p_corrected"].between(0.0, 1.0).all()
+        assert np.all(np.isfinite(df["cohens_d"].to_numpy()))
+        # FDR-adjusted p-values are >= raw p-values
+        assert np.all(df["p_corrected"].to_numpy() + 1e-12 >= df["p_value"].to_numpy())
 
     def test_mismatched_groups(self, small_matrix):
         from subwave.comparison import loading_test

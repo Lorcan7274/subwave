@@ -37,6 +37,21 @@ Or let subwave choose the number of components:
 result = sw.decompose(X, n_components="auto")
 ```
 
+### ECG example
+
+```python
+import numpy as np
+import subwave as sw
+
+# Stack detected QRS complexes into an event matrix
+X_beats = np.load("heartbeats.npy")     # (n_beats, n_samples)
+result = sw.decompose(X_beats, method="svd", n_components=3)
+
+# Outlier detection flags ectopic beats
+scores = result.outlier_scores()
+ectopic = np.where(scores > np.percentile(scores, 99))[0]
+```
+
 ## Loading data
 
 ```python

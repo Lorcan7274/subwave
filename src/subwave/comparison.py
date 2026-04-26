@@ -130,13 +130,51 @@ def loading_test(
 
     p = (np.sum(np.abs(null) >= np.abs(observed), axis=0) + 1) / (n_perm + 1)
 
+    a_loadings = loadings[mask_a]
+    b_loadings = loadings[~mask_a]
+    n_a_obs = a_loadings.shape[0]
+    n_b_obs = b_loadings.shape[0]
+    var_a = a_loadings.var(axis=0, ddof=1) if n_a_obs > 1 else np.zeros(n_components)
+    var_b = b_loadings.var(axis=0, ddof=1) if n_b_obs > 1 else np.zeros(n_components)
+    if n_a_obs + n_b_obs > 2:
+        pooled_var = (
+            (n_a_obs - 1) * var_a + (n_b_obs - 1) * var_b
+        ) / (n_a_obs + n_b_obs - 2)
+    else:
+        pooled_var = np.zeros(n_components)
+    pooled_sd = np.sqrt(pooled_var)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cohens_d = np.where(pooled_sd > 0, observed / pooled_sd, 0.0)
+
+    p_corrected = _benjamini_hochberg(p)
+
     return pd.DataFrame(
         {
             "component": np.arange(1, n_components + 1),
             "observed_diff": observed,
             "p_value": p,
+            "cohens_d": cohens_d,
+            "p_corrected": p_corrected,
         }
     )
+
+
+def _benjamini_hochberg(pvals: np.ndarray) -> np.ndarray:
+    """Benjamini-Hochberg FDR-corrected p-values (q-values)."""
+    pvals = np.asarray(pvals, dtype=float)
+    n = pvals.size
+    if n == 0:
+        return pvals.copy()
+    order = np.argsort(pvals)
+    ranked = pvals[order]
+    ranks = np.arange(1, n + 1)
+    adj = ranked * n / ranks
+    # Enforce monotonicity from the largest p-value down
+    adj = np.minimum.accumulate(adj[::-1])[::-1]
+    adj = np.clip(adj, 0.0, 1.0)
+    out = np.empty_like(adj)
+    out[order] = adj
+    return out
 
 
 def permutation_test(
