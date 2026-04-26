@@ -2,6 +2,19 @@
 
 Data-driven decomposition of neurophysiological event waveform populations.
 
+<p align="center">
+  <img src="docs/images/templates.png" width="60%"><br>
+  <em>Five principal waveform templates extracted from 821 sleep spindles via SVD.</em>
+</p>
+<p align="center">
+  <img src="docs/images/waterfall.png" width="80%"><br>
+  <em>200 sigma-filtered spindle waveforms overlaid, with the population mean in black.</em>
+</p>
+<p align="center">
+  <img src="docs/images/heatmap.png" width="48%">
+  <img src="docs/images/scatter_clusters.png" width="48%"><br>
+  <em>Left: all events sorted by Component 1 loading. Right: k-means clustering in the first two component scores.</em>
+</p>
 ## Install
 
 ```bash
