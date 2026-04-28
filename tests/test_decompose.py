@@ -275,6 +275,113 @@ class TestRandomizedSVD:
         assert result.loadings.shape == (5001, 5)
 
 
+class TestFourierSVD:
+    def _make_jittered(self, rng, n_events=40, n_samples=128, sfreq=128.0,
+                       freq_hz=13.0, jitter=True, jitter_samples=8):
+        t = np.arange(n_samples) / sfreq
+        events = []
+        for _ in range(n_events):
+            shift = rng.integers(-jitter_samples, jitter_samples + 1) if jitter else 0
+            phase = 2 * np.pi * freq_hz * (t - shift / sfreq)
+            wave = np.sin(phase) * rng.uniform(0.8, 1.2)
+            wave = wave + rng.normal(0, 0.05, n_samples)
+            events.append(wave)
+        return np.stack(events)
+
+    def test_output_shapes(self, rng):
+        from subwave import decompose
+        X = self._make_jittered(rng)
+        result = decompose(X, method="fourier_svd", n_components=3)
+        n_freqs = X.shape[1] // 2 + 1
+        assert result.templates.shape == (3, n_freqs)
+        assert result.loadings.shape == (X.shape[0], 3)
+
+    def test_domain_marked_frequency(self, rng):
+        from subwave import decompose
+        X = self._make_jittered(rng)
+        result = decompose(X, method="fourier_svd", n_components=2)
+        assert result.config.get("domain") == "frequency"
+
+    def test_template_peak_at_correct_freq(self, rng):
+        from subwave import decompose
+        sfreq = 128.0
+        n_samples = 128
+        freq_hz = 13.0
+        X = self._make_jittered(rng, n_samples=n_samples, sfreq=sfreq, freq_hz=freq_hz)
+        result = decompose(X, method="fourier_svd", n_components=3)
+        # Templates live in frequency domain; bin for freq_hz is freq_hz / (sfreq/n_samples)
+        bin_for_freq = int(round(freq_hz / (sfreq / n_samples)))
+        # Use mean spectrum (most-of-variance template + mean) — peak should be near bin_for_freq
+        mean_spec = result.mean_waveform
+        assert abs(int(np.argmax(mean_spec)) - bin_for_freq) <= 2
+
+    def test_shift_invariance_vs_plain_svd(self, rng):
+        from subwave import decompose
+        rng2 = np.random.default_rng(0)
+        X_no_jitter = self._make_jittered(rng2, jitter=False)
+        rng3 = np.random.default_rng(0)
+        X_jitter = self._make_jittered(rng3, jitter=True, jitter_samples=8)
+
+        f_no = decompose(X_no_jitter, method="fourier_svd", n_components=3)
+        f_yes = decompose(X_jitter, method="fourier_svd", n_components=3)
+        s_no = decompose(X_no_jitter, method="svd", n_components=3)
+        s_yes = decompose(X_jitter, method="svd", n_components=3)
+
+        # Top-component EVR for fourier_svd should be roughly stable under jitter,
+        # while plain svd's top EVR should drop noticeably.
+        f_drop = f_no.explained_variance_ratio[0] - f_yes.explained_variance_ratio[0]
+        s_drop = s_no.explained_variance_ratio[0] - s_yes.explained_variance_ratio[0]
+        assert f_drop < s_drop
+
+
+class TestScatteringSVD:
+    def _make_pop(self, rng, n_events=20, n_samples=128, sfreq=128.0,
+                  freq_hz=13.0, shifts=None):
+        t = np.arange(n_samples) / sfreq
+        events = []
+        for i in range(n_events):
+            shift = 0 if shifts is None else int(shifts[i])
+            phase = 2 * np.pi * freq_hz * (t - shift / sfreq)
+            wave = np.sin(phase) * rng.uniform(0.8, 1.2)
+            wave = wave + rng.normal(0, 0.02, n_samples)
+            events.append(wave)
+        return np.stack(events)
+
+    def test_output_shapes(self, rng):
+        pytest.importorskip("kymatio")
+        from subwave import decompose
+        X = self._make_pop(rng)
+        result = decompose(X, method="scattering_svd", n_components=3)
+        assert result.loadings.shape == (X.shape[0], 3)
+        assert result.templates.shape[0] == 3
+        assert result.config.get("domain") == "scattering"
+
+    def test_shift_invariance(self):
+        pytest.importorskip("kymatio")
+        from subwave import decompose
+        rng = np.random.default_rng(0)
+        n_events = 16
+        # Same underlying waveforms, two shift sets
+        X_a = self._make_pop(rng, n_events=n_events, shifts=np.zeros(n_events))
+        rng2 = np.random.default_rng(0)
+        shifts = rng2.integers(-6, 7, size=n_events)
+        # Recreate with same noise seed but different shifts
+        rng3 = np.random.default_rng(0)
+        X_b = self._make_pop(rng3, n_events=n_events, shifts=shifts)
+
+        # Decompose stacked so both populations share the same basis
+        X = np.vstack([X_a, X_b])
+        result = decompose(X, method="scattering_svd", n_components=3)
+        L_a = result.loadings[:n_events]
+        L_b = result.loadings[n_events:]
+
+        cos = np.array([
+            np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12)
+            for a, b in zip(L_a, L_b)
+        ])
+        assert np.median(cos) > 0.9
+
+
 class TestMetadataMethods:
     def test_loadings_correlated_with(self, event_matrix):
         result = event_matrix.decompose(method="svd", n_components=3)

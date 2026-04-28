@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -197,3 +198,91 @@ def from_yasa(
         raise ValueError("No valid spindle windows could be extracted from the signal.")
 
     return EventMatrix(np.stack(waveforms), sfreq=sfreq)
+
+
+def from_edf_batch(
+    edf_paths,
+    channel: str,
+    detector: str = "yasa",
+    sfreq: float | None = None,
+    window_sec: float = 1.0,
+    detector_kwargs: dict | None = None,
+) -> EventMatrix:
+    """Process multiple EDF files and pool detected events into one EventMatrix.
+
+    Parameters
+    ----------
+    edf_paths:
+        Iterable of paths to EDF files.
+    channel:
+        Channel name to pick from each EDF (e.g., ``'C3'``).
+    detector:
+        ``'yasa'`` (requires yasa installed). Future: ``'luna'``, ``'mne'``.
+    sfreq:
+        Resample all files to this sfreq before detection. ``None`` uses native.
+    window_sec:
+        Half-window around each detected event peak.
+    detector_kwargs:
+        Extra kwargs passed to the detector (e.g., YASA thresholds).
+
+    Returns
+    -------
+    EventMatrix with ``.data`` of shape ``(total_events, n_samples)`` and a
+    pandas DataFrame in ``.meta`` with columns ``subject``, ``file``,
+    ``event_index``, ``peak_sec``.
+    """
+    try:
+        import mne
+    except ImportError as exc:
+        raise ImportError("mne is required: pip install subwave[mne]") from exc
+
+    all_waveforms: list[np.ndarray] = []
+    meta_rows: list[dict] = []
+    half: int | None = None
+    fs_used: float | None = None
+
+    for subj_idx, path in enumerate(edf_paths):
+        raw = mne.io.read_raw_edf(str(path), preload=True, verbose=False)
+        raw.pick([channel])
+        if sfreq and raw.info["sfreq"] != sfreq:
+            raw.resample(sfreq)
+        fs = float(sfreq) if sfreq else float(raw.info["sfreq"])
+        data = raw.get_data()[0]
+
+        if half is None:
+            half = int(window_sec * fs)
+            fs_used = fs
+
+        if detector == "yasa":
+            try:
+                import yasa
+            except ImportError as exc:
+                raise ImportError(
+                    "yasa is required for detector='yasa': pip install subwave[yasa]"
+                ) from exc
+            kw = detector_kwargs or {}
+            sp = yasa.spindles_detect(data * 1e6, fs, ch_names=[channel], **kw)
+            if sp is None:
+                continue
+            peaks = sp.summary()["Peak"].values
+        else:
+            raise ValueError(f"Unknown detector: {detector}")
+
+        for ev_i, peak_sec in enumerate(peaks):
+            center = int(peak_sec * fs)
+            start, end = center - half, center + half
+            if start >= 0 and end <= len(data):
+                all_waveforms.append(data[start:end] * 1e6)
+                meta_rows.append({
+                    "subject": subj_idx,
+                    "file": os.path.basename(str(path)),
+                    "event_index": ev_i,
+                    "peak_sec": float(peak_sec),
+                })
+
+    if not all_waveforms:
+        raise ValueError("No events detected across all files.")
+
+    em = EventMatrix(np.stack(all_waveforms), sfreq=fs_used)
+    em.meta = pd.DataFrame(meta_rows)
+    return em

@@ -32,7 +32,10 @@ dependencies = [
 
 [project.optional-dependencies]
 mne = ["mne>=1.0"]
-yasa = ["yasa>=0.6"]
+yasa = ["yasa>=0.6", "mne>=1.0"]
+scattering = ["kymatio"]
+tensor = ["tensorly"]
+all = ["mne>=1.0", "yasa>=0.6", "kymatio", "tensorly"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

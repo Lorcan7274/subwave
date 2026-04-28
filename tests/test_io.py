@@ -130,3 +130,52 @@ class TestFromMne:
         from subwave import from_mne
         with pytest.raises(ImportError, match="mne"):
             from_mne(object())
+
+
+class TestFromEdfBatch:
+    def _make_edf(self, tmp_path, name, sfreq, duration, channel, freq_hz, rng):
+        mne = pytest.importorskip("mne")
+        n_samples = int(sfreq * duration)
+        t = np.arange(n_samples) / sfreq
+        data = (np.sin(2 * np.pi * freq_hz * t) + rng.normal(0, 0.05, n_samples))[None, :]
+        info = mne.create_info(ch_names=[channel], sfreq=sfreq, ch_types="eeg")
+        raw = mne.io.RawArray(data, info, verbose=False)
+        path = tmp_path / name
+        try:
+            mne.export.export_raw(str(path), raw, fmt="edf", overwrite=True, verbose=False)
+        except Exception as e:
+            pytest.skip(f"EDF export not available: {e}")
+        return path
+
+    def test_basic_batch(self, tmp_path, rng):
+        pytest.importorskip("mne")
+        pytest.importorskip("yasa")
+        channel = "C3"
+        sfreq = 200.0
+        p1 = self._make_edf(tmp_path, "subj1.edf", sfreq, 30.0, channel, 13.0, rng)
+        p2 = self._make_edf(tmp_path, "subj2.edf", sfreq, 30.0, channel, 12.0, rng)
+
+        from subwave import from_edf_batch
+        try:
+            em = from_edf_batch([p1, p2], channel=channel, window_sec=0.5)
+        except ValueError as e:
+            if "No events" in str(e):
+                pytest.skip("YASA detected no events on synthetic signal")
+            raise
+
+        expected_samples = 2 * int(0.5 * sfreq)
+        assert em.data.shape[1] == expected_samples
+        assert em.meta is not None
+        assert list(em.meta.columns) == ["subject", "file", "event_index", "peak_sec"]
+        assert len(em.meta) == em.data.shape[0]
+        assert set(em.meta["subject"].unique()).issubset({0, 1})
+
+    def test_unknown_detector(self, tmp_path, rng):
+        pytest.importorskip("mne")
+        channel = "C3"
+        sfreq = 200.0
+        p = self._make_edf(tmp_path, "subj.edf", sfreq, 5.0, channel, 13.0, rng)
+
+        from subwave import from_edf_batch
+        with pytest.raises(ValueError, match="Unknown detector"):
+            from_edf_batch([p], channel=channel, detector="bogus")

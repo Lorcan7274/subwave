@@ -23,7 +23,7 @@ AlignMode = Literal["peak", "trough", "onset", "midpoint", "none"]
 
 def decompose(
     source: Union["AxisAnnotatedTensor", "TensorView", np.ndarray],
-    method: Literal["svd", "nmf", "dictlearn"] = "svd",
+    method: Literal["svd", "nmf", "dictlearn", "fourier_svd", "scattering_svd"] = "svd",
     n_components: int | str = 5,
     center: bool = True,
     normalize: NormalizeMode = "none",
@@ -188,12 +188,13 @@ class EventMatrix:
         Sampling frequency in Hz. Used only for axis labels in plots.
     """
 
-    def __init__(self, X: np.ndarray, sfreq: float = 1.0):
+    def __init__(self, X: np.ndarray, sfreq: float = 1.0, meta=None):
         X = np.asarray(X, dtype=float)
         if X.ndim != 2:
             raise ValueError(f"X must be 2-D (n_events, n_samples), got shape {X.shape}")
         self._X = X
         self.sfreq = float(sfreq)
+        self.meta = meta
 
     # ------------------------------------------------------------------
     # Properties

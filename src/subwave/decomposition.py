@@ -177,7 +177,121 @@ def _dictlearn(
     )
 
 
-_BACKENDS = {"svd": _svd, "nmf": _nmf, "dictlearn": _dictlearn}
+def _fourier_svd(
+    X: np.ndarray,
+    n_components: int,
+    config: dict,
+    instance_ids: np.ndarray,
+    sample_axis_index: np.ndarray | None,
+) -> DecompositionResult:
+    """Fourier-then-SVD: shift-invariant decomposition.
+
+    Computes the magnitude rfft of each event so small temporal shifts (which
+    affect only phase) do not corrupt the decomposition. SVD is then run on the
+    (n_events, n_freqs) magnitude-spectrum matrix.
+    """
+    X_mag = np.abs(np.fft.rfft(X, axis=1))
+
+    mean_waveform = X_mag.mean(axis=0) if config.get("center", True) else np.zeros(X_mag.shape[1])
+    Xc = X_mag - mean_waveform if config.get("center", True) else X_mag
+
+    if Xc.shape[0] > 5000:
+        from sklearn.utils.extmath import randomized_svd
+        k_req = min(n_components, min(Xc.shape) - 1)
+        U, s, Vh = randomized_svd(Xc, n_components=k_req, random_state=0)
+    else:
+        U, s, Vh = np.linalg.svd(Xc, full_matrices=False)
+    k = min(n_components, len(s))
+
+    templates = Vh[:k]
+    loadings = U[:, :k] * s[:k]
+    sv = s[:k]
+
+    total_var = (s ** 2).sum()
+    evr = (sv ** 2) / total_var if total_var > 0 else np.zeros(k)
+
+    residuals = Xc - loadings @ templates
+
+    config = dict(config)
+    config["domain"] = "frequency"
+
+    n_freqs = X_mag.shape[1]
+    freq_axis = np.arange(n_freqs)
+    if sample_axis_index is None or len(sample_axis_index) != n_freqs:
+        sample_axis_index_out = freq_axis
+    else:
+        sample_axis_index_out = sample_axis_index
+
+    return _build_result(
+        "fourier_svd", config, templates, loadings, sv, evr,
+        mean_waveform, residuals, instance_ids, sample_axis_index_out,
+    )
+
+
+def _scattering_svd(
+    X: np.ndarray,
+    n_components: int,
+    config: dict,
+    instance_ids: np.ndarray,
+    sample_axis_index: np.ndarray | None,
+) -> DecompositionResult:
+    """Scattering transform then SVD.
+
+    Computes 1-D wavelet scattering coefficients per event (locally invariant
+    to translation, stable to deformation), flattens, then runs SVD. Templates
+    live in scattering coefficient space.
+    """
+    try:
+        from kymatio.numpy import Scattering1D
+    except ImportError as exc:
+        raise ImportError(
+            "Scattering transform requires kymatio. Install with: pip install kymatio"
+        ) from exc
+
+    n_samples = X.shape[1]
+    J = max(int(np.log2(n_samples)) - 2, 1)
+    T = n_samples
+    scattering = Scattering1D(J=J, shape=(n_samples,), Q=8, T=T)
+
+    Sx = scattering(X.astype(np.float32))
+    Sx_flat = Sx.reshape(X.shape[0], -1).astype(np.float64)
+
+    center = config.get("center", True)
+    mean_vec = Sx_flat.mean(axis=0) if center else np.zeros(Sx_flat.shape[1])
+    Xc = Sx_flat - mean_vec
+
+    U, s, Vh = np.linalg.svd(Xc, full_matrices=False)
+    k = min(n_components, len(s))
+    templates = Vh[:k]
+    loadings = U[:, :k] * s[:k]
+    sv = s[:k]
+    total_var = float((s ** 2).sum())
+    evr = (sv ** 2) / total_var if total_var > 0 else np.zeros(k)
+    residuals = Xc - loadings @ templates
+
+    config = dict(config)
+    config["domain"] = "scattering"
+
+    n_feats = Sx_flat.shape[1]
+    feat_axis = np.arange(n_feats)
+    if sample_axis_index is None or len(sample_axis_index) != n_feats:
+        sample_axis_index_out = feat_axis
+    else:
+        sample_axis_index_out = sample_axis_index
+
+    return _build_result(
+        "scattering_svd", config, templates, loadings, sv, evr,
+        mean_vec, residuals, instance_ids, sample_axis_index_out,
+    )
+
+
+_BACKENDS = {
+    "svd": _svd,
+    "nmf": _nmf,
+    "dictlearn": _dictlearn,
+    "fourier_svd": _fourier_svd,
+    "scattering_svd": _scattering_svd,
+}
 
 
 def run_decomposition(
