@@ -15,6 +15,7 @@ Data-driven decomposition of neurophysiological event waveform populations.
   <img src="https://raw.githubusercontent.com/Lorcan7274/subwave/main/docs/images/scatter_clusters.png" width="48%"><br>
   <em>Left: all events sorted by Component 1 loading. Right: k-means clustering in the first two component scores.</em>
 </p>
+
 ## Install
 
 ```bash
