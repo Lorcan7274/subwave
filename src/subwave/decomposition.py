@@ -86,7 +86,8 @@ def _svd(
     loadings = U[:, :k] * s[:k]
     sv = s[:k]
 
-    total_var = (s ** 2).sum()
+    # total_var = (s ** 2).sum()
+    total_var = (Xc ** 2).sum()
     evr = (sv ** 2) / total_var if total_var > 0 else np.zeros(k)
 
     residuals = Xc - loadings @ templates
@@ -139,7 +140,7 @@ def _nmf(
     templates = model.components_
 
     residuals = X - loadings @ templates
-    evr = _incremental_evr(X - X.mean(axis=0), loadings, templates)
+    evr = _incremental_evr(X, loadings, templates)
     sv = np.linalg.norm(templates, axis=1)
 
     return _build_result(
