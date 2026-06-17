@@ -72,6 +72,15 @@ def decompose(
         aat = source.materialize()
     elif isinstance(source, AxisAnnotatedTensor):
         aat = source
+    elif isinstance(source, EventMatrix):
+        return source.decompose(
+            method=method,
+            n_components=n_components,
+            center=center,
+            normalize=normalize,
+            align=align,
+            resample_to_length=resample_to_length,
+        )
     else:
         X = np.asarray(source, dtype=float)
         if X.ndim != 2:

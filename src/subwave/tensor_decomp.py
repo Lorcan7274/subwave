@@ -62,6 +62,38 @@ class TensorResult:
     def rank(self):
         return self.temporal_factors.shape[1]
 
+    def plot(self, time=None, ch_labels=None, rank=None):
+        """Three-panel plot per component: temporal, spatial, loading distribution."""
+        import matplotlib.pyplot as plt
+
+        k = min(rank, self.rank) if rank else self.rank
+        n_s = self.temporal_factors.shape[0]
+        t = time if time is not None else np.arange(n_s)
+        chs = ch_labels if ch_labels is not None else [str(i) for i in range(self.spatial_factors.shape[0])]
+
+        fig, axes = plt.subplots(k, 3, figsize=(12, 2.5 * k))
+        if k == 1:
+            axes = axes[np.newaxis, :]
+
+        for i in range(k):
+            axes[i, 0].plot(t, self.temporal_factors[:, i])
+            axes[i, 0].axvline(0, color='gray', lw=0.8, ls='--')
+            axes[i, 0].set_ylabel(f'Comp {i+1}')
+            if i == 0:
+                axes[i, 0].set_title('Temporal')
+
+            axes[i, 1].bar(chs, self.spatial_factors[:, i])
+            if i == 0:
+                axes[i, 1].set_title('Spatial (channels)')
+
+            axes[i, 2].hist(self.event_factors[:, i], bins=40)
+            if i == 0:
+                axes[i, 2].set_title('Event loadings')
+
+        axes[-1, 0].set_xlabel('Time (s)' if time is not None else 'Samples')
+        plt.tight_layout()
+        return axes
+
     def component_waveform(self, comp, channel=None):
         """Get the temporal waveform for a component, optionally scaled by channel."""
         tw = self.temporal_factors[:, comp]
