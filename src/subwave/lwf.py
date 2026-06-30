@@ -32,6 +32,10 @@ def _read_string(f) -> str:
     n = _read_u32(f)
     return f.read(n).decode('utf-8') if n else ''
 
+def _decode_int16(raw: bytes, phys_min: float, phys_max: float) -> np.ndarray:
+    digital = np.frombuffer(raw, dtype='<i2').astype(np.float64)
+    return (digital + 32768.0) * (phys_max - phys_min) / 65535.0 + phys_min
+
 # ---------------------------------------------------------------------------
 # Header reader  (cursor lands at start of index section on return)
 # ---------------------------------------------------------------------------
@@ -58,11 +62,14 @@ def _read_header(f) -> dict:
     n_ch = _read_i32(f)
     channels = []
     for _ in range(n_ch):
-        label = _read_string(f)
-        unit  = _read_string(f)
+        label    = _read_string(f)
+        unit     = _read_string(f)
         _read_u64(f)          # sample_step_tp — not needed in Python
-        sr    = _read_f64(f)
-        channels.append({'label': label, 'unit': unit, 'sr': sr})
+        sr       = _read_f64(f)
+        phys_min = _read_f64(f)
+        phys_max = _read_f64(f)
+        channels.append({'label': label, 'unit': unit, 'sr': sr,
+                         'phys_min': phys_min, 'phys_max': phys_max})
 
     n_features = _read_i32(f)
     feature_names = [_read_string(f) for _ in range(n_features)]
@@ -70,15 +77,15 @@ def _read_header(f) -> dict:
     n_waves = _read_i32(f)
 
     return {
-        'id':           id_,
-        'startdate':    startdate,
-        'starttime':    starttime,
-        'tag':          tag,
-        'align':        align,
-        'annots':       annots,
-        'channels':     channels,
+        'id':            id_,
+        'startdate':     startdate,
+        'starttime':     starttime,
+        'tag':           tag,
+        'align':         align,
+        'annots':        annots,
+        'channels':      channels,
         'feature_names': feature_names,
-        'n_waves':      n_waves,
+        'n_waves':       n_waves,
     }
 
 # ---------------------------------------------------------------------------
@@ -90,11 +97,13 @@ def _read_events(f, header: dict) -> tuple[np.ndarray, pd.DataFrame]:
     n_ch       = len(header['channels'])
     n_features = len(header['feature_names'])
 
+    # build label -> (phys_min, phys_max) for int16 decoding
+    ch_phys = {c['label']: (c['phys_min'], c['phys_max']) for c in header['channels']}
+
     # --- pass 1: index section ---
-    # Collects per-event timing/annotation metadata and validates uniform
-    # sample counts.  No signal data lives in the index.
     index_rows: list[dict] = []
     expected_n: int | None = None
+    annot_ch_match = False  # detected if any event has fewer blocks than channels
 
     for w in range(n_waves):
         annot    = _read_string(f)
@@ -108,24 +117,17 @@ def _read_events(f, header: dict) -> tuple[np.ndarray, pd.DataFrame]:
         _read_u64(f)              # payload_offset — not needed (sequential read)
 
         n_blocks = _read_i32(f)
-        if n_blocks != n_ch:
-            raise ValueError(
-                f"event {w}: block count {n_blocks} != n_channels {n_ch}"
-            )
+        if n_blocks < n_ch:
+            annot_ch_match = True
 
-        ns_per_ch: list[int] = []
-        for _ in range(n_ch):
+        ns_list: list[int] = []
+        for _ in range(n_blocks):
             ns = _read_i32(f)
             _read_f64(f)          # data_start_sec
             _read_f64(f)          # data_stop_sec
-            ns_per_ch.append(ns)
+            ns_list.append(ns)
 
-        # all channels in one event must agree (they share the same SR)
-        if len(set(ns_per_ch)) > 1:
-            raise ValueError(
-                f"event {w}: channels have different sample counts {ns_per_ch}"
-            )
-        ns = ns_per_ch[0] if ns_per_ch else 0
+        ns = ns_list[0] if ns_list else 0
 
         if expected_n is None:
             expected_n = ns
@@ -144,38 +146,42 @@ def _read_events(f, header: dict) -> tuple[np.ndarray, pd.DataFrame]:
             'anchor_sec':      anchor,
             'wave_start_sec':  wave_start,
             'wave_stop_sec':   wave_stop,
+            'n_blocks':        n_blocks,
         })
 
     if expected_n is None:
         expected_n = 0
 
-    # --- pass 2: payload section ---
-    data = np.empty((n_waves, n_ch, expected_n), dtype=np.float64)
+    # output channels: 1 per event (annot-ch-match) or all header channels
+    out_n_ch = 1 if annot_ch_match else n_ch
+    data = np.full((n_waves, out_n_ch, expected_n), np.nan, dtype=np.float64)
     meta_col: list[str] = []
 
+    # --- pass 2: payload section ---
     for w in range(n_waves):
-        _read_string(f)           # annot    (already in index)
-        _read_string(f)           # instance
-        _read_string(f)           # annot_ch
         meta_col.append(_read_string(f))  # meta — only in payload
-
-        for _ in range(5):        # 5 timing floats — already in index
-            _read_f64(f)
-
         n_blocks = _read_i32(f)
-        for c in range(n_blocks):
-            ns = _read_i32(f)
-            _read_f64(f)          # data_start_sec
-            _read_f64(f)          # data_stop_sec
-            if n_features > 0:
-                # skip feature_qc (int32) + n_features × float64
-                f.read(4 + n_features * 8)
-            raw = f.read(ns * 4)
-            data[w, c, :] = np.frombuffer(raw, dtype='<f4')
 
-    event_meta = pd.DataFrame(index_rows)
+        for b in range(n_blocks):
+            if n_features > 0:
+                f.read(4 + n_features * 8)   # feature_qc (int32) + feature values (float64)
+
+            ns = index_rows[w]['n_blocks']   # same as n_blocks, use index value
+            ns = expected_n                   # uniform (validated above)
+            raw = f.read(ns * 2)             # int16 = 2 bytes
+
+            # determine which channel this block belongs to
+            if annot_ch_match:
+                label = index_rows[w]['annot_ch']
+            else:
+                label = header['channels'][b]['label']
+
+            phys_min, phys_max = ch_phys.get(label, (0.0, 1.0))
+            data[w, b, :] = _decode_int16(raw, phys_min, phys_max)
+
+    event_meta = pd.DataFrame(index_rows).drop(columns=['n_blocks'])
     event_meta['meta'] = meta_col
-    return data, event_meta
+    return data, event_meta, annot_ch_match
 
 # ---------------------------------------------------------------------------
 # Path resolution
@@ -260,6 +266,11 @@ def from_lwf(
     All waveform events must have the same number of samples (i.e. Luna's
     ``require=full`` mode, or any mode that produced uniform windows).
 
+    When the file was written with ``annot-ch-match=T``, each event contains
+    one channel block (the detecting channel).  The tensor shape is then
+    ``(n_waves, 1, n_samples)`` and ``axis_meta['instance']['annot_ch']``
+    identifies the channel for each event.
+
     Parameters
     ----------
     paths:
@@ -271,14 +282,6 @@ def from_lwf(
     Returns
     -------
     AxisAnnotatedTensor with axes ``['instance', 'channel', 'sample']``.
-
-    - ``axis_meta['instance']``: id, tag, file, annot, instance, annot_ch, meta,
-      anchor_sec, annot_start_sec, annot_stop_sec, wave_start_sec,
-      wave_stop_sec.
-    - ``axis_meta['channel']``: label, unit, sr.
-    - ``axis_meta['sample']``: sample_index, time (seconds; 0 = annotation
-      anchor).
-    - ``attrs``: sfreq, source_files, align.
     """
     files = _resolve_paths(paths, recur)
 
@@ -292,7 +295,6 @@ def from_lwf(
 
     ref_ch = headers[0]['channels']
 
-    # all channels in every file must have the same labels and SRs
     ref_sig = [(c['label'], c['sr']) for c in ref_ch]
     for h in headers[1:]:
         sig = [(c['label'], c['sr']) for c in h['channels']]
@@ -303,8 +305,6 @@ def from_lwf(
                 f"  {h['_path']}: {sig}"
             )
 
-    # within a file, all channels must share the same sample rate so that a
-    # single sample axis can represent all channels
     all_srs = [c['sr'] for c in ref_ch]
     if len(set(all_srs)) > 1:
         raise ValueError(
@@ -319,11 +319,19 @@ def from_lwf(
     all_data:  list[np.ndarray] = []
     all_meta:  list[pd.DataFrame] = []
     expected_n: int | None = None
+    detected_annot_ch_match: bool | None = None
 
     for h in headers:
         with open(h['_path'], 'rb') as f:
-            _read_header(f)           # reposition cursor at index section
-            data, event_meta = _read_events(f, h)
+            _read_header(f)
+            data, event_meta, annot_ch_match = _read_events(f, h)
+
+        if detected_annot_ch_match is None:
+            detected_annot_ch_match = annot_ch_match
+        elif annot_ch_match != detected_annot_ch_match:
+            raise ValueError(
+                f"mixed annot-ch-match modes across files: {h['_path']}"
+            )
 
         ns = data.shape[2]
         if expected_n is None:
@@ -343,14 +351,14 @@ def from_lwf(
 
     if expected_n is None:
         expected_n = 0
+    if detected_annot_ch_match is None:
+        detected_annot_ch_match = False
 
-    data      = np.concatenate(all_data, axis=0)
+    data       = np.concatenate(all_data, axis=0)
     event_meta = pd.concat(all_meta, ignore_index=True)
 
-    n_events, n_ch, n_samples = data.shape
+    n_events, n_ch_out, n_samples = data.shape
 
-    # time axis: 0 = annotation anchor
-    # wave_start_sec - anchor_sec == -w_left, constant across all events
     if n_events > 0:
         offset = (
             event_meta['wave_start_sec'].iloc[0]
@@ -360,7 +368,15 @@ def from_lwf(
         offset = 0.0
     time_axis = offset + np.arange(n_samples) / sr
 
-    sfreq: float | None = sr  # uniform across channels (checked above)
+    # channel axis metadata
+    if detected_annot_ch_match:
+        ch_meta = pd.DataFrame([{'label': '(annot_ch)', 'unit': '', 'sr': sr}])
+    else:
+        ch_meta = pd.DataFrame({
+            'label': [c['label'] for c in ref_ch],
+            'unit':  [c['unit']  for c in ref_ch],
+            'sr':    [c['sr']    for c in ref_ch],
+        })
 
     col_order = [
         'id', 'tag', 'file',
@@ -375,24 +391,21 @@ def from_lwf(
         axes=['instance', 'channel', 'sample'],
         axis_index={
             'instance': np.arange(n_events),
-            'channel':  np.arange(n_ch),
+            'channel':  np.arange(n_ch_out),
             'sample':   time_axis,
         },
         axis_meta={
             'instance': event_meta,
-            'channel': pd.DataFrame({
-                'label': [c['label'] for c in ref_ch],
-                'unit':  [c['unit']  for c in ref_ch],
-                'sr':    [c['sr']    for c in ref_ch],
-            }),
+            'channel':  ch_meta,
             'sample': pd.DataFrame({
                 'sample_index': np.arange(n_samples),
                 'time':         time_axis,
             }),
         },
         attrs={
-            'sfreq':        sfreq,
-            'source_files': [str(h['_path']) for h in headers],
-            'align':        ref_align,
+            'sfreq':             sr,
+            'source_files':      [str(h['_path']) for h in headers],
+            'align':             ref_align,
+            'annot_ch_match':    detected_annot_ch_match,
         },
     )
